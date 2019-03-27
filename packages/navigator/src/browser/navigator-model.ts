@@ -17,13 +17,14 @@
 import { injectable, inject, postConstruct } from 'inversify';
 import URI from '@theia/core/lib/common/uri';
 import { FileNode, FileTreeModel } from '@theia/filesystem/lib/browser';
-import { OpenerService, open, TreeNode, ExpandableTreeNode } from '@theia/core/lib/browser';
+import { OpenerService, open, TreeNode, ExpandableTreeNode, LabelProvider } from '@theia/core/lib/browser';
 import { FileNavigatorTree, WorkspaceRootNode, WorkspaceNode } from './navigator-tree';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 
 @injectable()
 export class FileNavigatorModel extends FileTreeModel {
 
+    @inject(LabelProvider) protected readonly labelProvider: LabelProvider;
     @inject(OpenerService) protected readonly openerService: OpenerService;
     @inject(FileNavigatorTree) protected readonly tree: FileNavigatorTree;
     @inject(WorkspaceService) protected readonly workspaceService: WorkspaceService;
@@ -71,7 +72,11 @@ export class FileNavigatorModel extends FileTreeModel {
 
     protected async createRoot(): Promise<TreeNode | undefined> {
         if (this.workspaceService.opened) {
-            const workspaceNode = WorkspaceNode.createRoot();
+            const stat = this.workspaceService.workspace;
+            const isMulti = (stat) ? !stat.isDirectory : false;
+            const workspaceNode = isMulti
+                ? this.createMultipleRootNode()
+                : WorkspaceNode.createRoot();
             const roots = await this.workspaceService.roots;
             for (const root of roots) {
                 workspaceNode.children.push(
@@ -80,6 +85,27 @@ export class FileNavigatorModel extends FileTreeModel {
             }
             return workspaceNode;
         }
+    }
+
+    /**
+     * Create multiple root node used to display
+     * the multiple root workspace name.
+     *
+     * @returns `WorkspaceNode`
+     */
+    protected createMultipleRootNode(): WorkspaceNode {
+        const workspace = this.workspaceService.workspace;
+        const name = (workspace)
+            ? new URI(workspace.uri).path.name
+            : 'untitled';
+        return {
+            id: name,
+            name: name,
+            parent: undefined,
+            children: [],
+            visible: true,
+            selected: false
+        };
     }
 
     /**
