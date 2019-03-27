@@ -14,13 +14,14 @@
  * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
  ********************************************************************************/
 
-import { inject, injectable } from 'inversify';
+import { inject, injectable, postConstruct } from 'inversify';
 import URI from '@theia/core/lib/common/uri';
 import { ILogger } from '@theia/core/lib/common/logger';
 import { Endpoint } from '@theia/core/lib/browser/endpoint';
 import { StatusBar, StatusBarAlignment } from '@theia/core/lib/browser/status-bar';
 import { FileSystem } from '../../common/filesystem';
 import { FileDownloadData } from '../../common/download/file-download-data';
+import { Deferred } from '@theia/core/lib/common/promise-util';
 
 @injectable()
 export class FileDownloadService {
@@ -39,6 +40,61 @@ export class FileDownloadService {
 
     @inject(StatusBar)
     protected readonly statusBar: StatusBar;
+
+    protected uploadForm: {
+        target: HTMLInputElement
+        file: HTMLInputElement
+    };
+
+    @postConstruct()
+    protected init(): void {
+        this.uploadForm = this.createUploadForm();
+    }
+
+    protected createUploadForm(): {
+        target: HTMLInputElement
+        file: HTMLInputElement
+    } {
+        const target = document.createElement('input');
+        target.type = 'text';
+        target.name = 'target';
+
+        const file = document.createElement('input');
+        file.type = 'file';
+        file.name = 'upload';
+        file.multiple = true;
+
+        const form = document.createElement('form');
+        form.style.display = 'none';
+        form.enctype = 'multipart/form-data';
+        form.append(target);
+        form.append(file);
+
+        document.body.appendChild(form);
+
+        file.addEventListener('change', async () => {
+            if (file.value) {
+                const body = new FormData(form);
+                const filesUrl = this.filesUrl();
+                const deferredUpload = this.deferredUpload;
+                try {
+                    await fetch(filesUrl, { method: 'POST', body });
+                    deferredUpload.resolve();
+                } catch (e) {
+                    deferredUpload.reject(e);
+                }
+            }
+        });
+        return { target, file };
+    }
+
+    protected deferredUpload = new Deferred<void>();
+    upload(targetUri: string | URI): Promise<void> {
+        this.deferredUpload = new Deferred<void>();
+        this.uploadForm.target.value = String(targetUri);
+        this.uploadForm.file.click();
+        return this.deferredUpload.promise;
+    }
 
     async download(uris: URI[]): Promise<void> {
         if (uris.length === 0) {
@@ -155,8 +211,12 @@ export class FileDownloadService {
     }
 
     protected endpoint(): string {
-        const url = new Endpoint({ path: 'files' }).getRestUrl().toString();
+        const url = this.filesUrl();
         return url.endsWith('/') ? url.slice(0, -1) : url;
+    }
+
+    protected filesUrl(): string {
+        return new Endpoint({ path: 'files' }).getRestUrl().toString();
     }
 
 }

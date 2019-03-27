@@ -16,7 +16,11 @@
 
 import { injectable, inject, named } from 'inversify';
 import { json } from 'body-parser';
-import { Application, Router } from 'express';
+// tslint:disable-next-line:no-implicit-dependencies
+import { Application, Router, Request, Response, NextFunction } from 'express';
+import * as formidable from 'formidable';
+import URI from '@theia/core/lib/common/uri';
+import { FileUri } from '@theia/core/lib/node/file-uri';
 import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
 import { FileDownloadHandler } from './file-download-handler';
 
@@ -34,12 +38,48 @@ export class FileDownloadEndpoint implements BackendApplicationContribution {
     protected readonly multiFileDownloadHandler: FileDownloadHandler;
 
     configure(app: Application): void {
+        const upload = this.upload.bind(this);
         const router = Router();
         router.get('/', (request, response) => this.singleFileDownloadHandler.handle(request, response));
         router.put('/', (request, response) => this.multiFileDownloadHandler.handle(request, response));
+        router.post('/', upload);
         // Content-Type: application/json
         app.use(json());
         app.use(FileDownloadEndpoint.PATH, router);
+    }
+
+    protected upload(req: Request, res: Response, next: NextFunction): void {
+        const form = new formidable.IncomingForm();
+        let targetUri: URI | undefined;
+        const clientErrors: string[] = [];
+        let serverError: Error | undefined;
+        form.on('field', (name: string, value: string) => {
+            if (name === 'target') {
+                targetUri = new URI(value);
+            }
+        });
+        form.on('fileBegin', (_: string, file: formidable.File) => {
+            if (targetUri) {
+                file.path = FileUri.fsPath(targetUri.resolve(file.name));
+            } else {
+                clientErrors.push(`cannot upload "${file.name}", target is not provided`);
+            }
+        });
+        form.on('error', (error: Error) => {
+            console.error(error);
+            serverError = error;
+        });
+        form.on('end', () => {
+            if (clientErrors.length) {
+                res.writeHead(400, clientErrors.join('\n'));
+            } else if (serverError) {
+                res.writeHead(500, String(serverError));
+            } else {
+                res.writeHead(200);
+            }
+            res.end();
+        });
+        form.parse(req);
     }
 
 }
